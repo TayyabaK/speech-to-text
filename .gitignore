@@ -1,0 +1,51 @@
+# Python environments
+.venv/
+venv/
+env/
+
+# Bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Whisper and Hugging Face downloads
+.cache/
+models/
+
+# Run logs
+*.log
+
+# In-progress and finished transcripts
+*.partial.json
+transcripts/
+
+# Packaged copy of the app (includes its own environment)
+share/
+
+# Evaluation outputs
+eval/
+
+# Lecture recordings used locally for training
+training/*.mp3
+training/*.wav
+training/*.m4a
+training/*.aac
+training/*.ogg
+training/*.opus
+training/*.flac
+training/*.wma
+training/*.mp4
+training/*.mkv
+training/*.webm
+
+# OS and editors
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.swp

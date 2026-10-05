@@ -1,0 +1,8 @@
+# Recurring transcription mistakes and their fixes, one per line: wrong<TAB>right
+# Whole words only. After editing, re-apply without re-transcribing:
+#   python transcribe.py <files> --rebuild
+اللہ تعالی	اللہ تعالیٰ
+تقوی	تقویٰ
+زکوۃ	زکوٰۃ
+انشاءاللہ	ان شاء اللہ
+انشااللہ	ان شاء اللہ

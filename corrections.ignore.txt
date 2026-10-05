@@ -1,0 +1,7 @@
+# Words learn.py must never rewrite, one per line.
+# These are correct, common words that were only mistakes in one lecture's context.
+مناسب
+نصب
+قرآن
+نظر
+شائبہ
