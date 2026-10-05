@@ -62,11 +62,26 @@ corrections.learned.tsv holds fixes learned from verified lectures. Do not edit
 it by hand; it is replaced when the training is updated.
 
 
+SKIPPED PASSAGES
+----------------
+Over a long recording the speech model sometimes jumps ahead and leaves out a
+sentence or two, even though the audio is clear. After the main pass the script
+looks for speech that has no text (or too few words for its length), listens to
+those passages again on their own and adds what it hears. This adds about ten
+minutes to an hour-long lecture.
+
+Lectures transcribed before this was added can be repaired without starting
+again (takes a few minutes per lecture):
+       powershell -ExecutionPolicy Bypass -File .\Transcribe.ps1 "C:\Lectures" --recover
+This rebuilds the Word documents, so copy out any edits you made in Word first.
+
+
 USEFUL OPTIONS (add after the file or folder)
 -------------------------------------------
     --start 00:10:00 --duration 00:05:00   transcribe only part, to test quickly
     --no-timestamps                        leave timestamps out of the document
     --overwrite                            transcribe again even if already done
+    --no-recover                           skip the second pass for skipped passages (faster)
     --help                                 list every option
 
 

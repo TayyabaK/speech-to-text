@@ -4,6 +4,7 @@ Usage:
     python transcribe.py LECTURE.mp3 [MORE.mp3 | FOLDER ...]
     python transcribe.py lectures\ --start 00:10:00 --duration 00:05:00   # test on a slice
     python transcribe.py lectures\ --rebuild                              # re-apply corrections only
+    python transcribe.py lectures\ --recover                              # fill skipped passages in old transcripts
 
 For each recording this writes, in --out-dir (default: transcripts\):
     <name>.docx         right-to-left Urdu text in paragraphs, with timestamps
@@ -16,6 +17,8 @@ Accuracy measures:
     * prompt.txt primes the model with the speaker's name and common religious vocabulary.
     * Each segment is not conditioned on the previous one, which avoids repetition loops.
     * Segments that sound like Arabic (Quran verses, duas) are re-transcribed as Arabic.
+    * A second pass finds speech the first pass skipped (voice with no text, or too few
+      words for a segment's length) and re-transcribes those passages on their own.
     * corrections.tsv fixes recurring misspellings; edit it and use --rebuild to re-apply.
 """
 
@@ -45,6 +48,8 @@ DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 WORD_CHAR = r"[\wؐ-ًؚ-ٰٟۖ-ۭ]"
 ARABIC_ONLY = re.compile(r"[ةيكىإأً-ْ]")  # letters Urdu spells differently, and vowel marks
 SENTENCE_END = ("۔", "؟", "!", "?", ".", "۔»")
+# Phrases Whisper is known to invent over music or noise (it learned them from video subtitles).
+INVENTED = re.compile(r"اشترك|القناة|سبسکرائب|سبسکرائیب|ترجمة|subscribe|subtitles", re.IGNORECASE)
 
 
 def find_inputs(paths):
@@ -139,23 +144,32 @@ def transcribe(model, audio, prompt, beam_size, arabic_check, offset=0.0, done=(
         raise
 
 
+def check_arabic(model, audio, segment, beam_size):
+    """Return (text, language), re-transcribing as Arabic if the segment sounds like Arabic.
+
+    Checking every segment is slow on CPU, so only likely Arabic is checked: Arabic-only
+    letters or vowel marks in the Urdu output, or low recognizer confidence.
+    """
+    text = segment.text.strip()
+    suspicious = ARABIC_ONLY.search(text) or segment.avg_logprob < -0.6
+    if suspicious and segment.end - segment.start >= 2.0:
+        piece = audio[int(segment.start * SAMPLE_RATE):int(segment.end * SAMPLE_RATE)]
+        detected, probability, _ = model.detect_language(audio=piece)
+        if detected == "ar" and probability >= 0.6:
+            arabic, _ = model.transcribe(piece, language="ar", beam_size=beam_size, condition_on_previous_text=False)
+            arabic_text = " ".join(s.text.strip() for s in arabic).strip()
+            if arabic_text:
+                return arabic_text, "ar"
+    return text, "ur"
+
+
 def collect(model, audio, segments, beam_size, arabic_check, offset, results, started, save):
     total = offset + len(audio) / SAMPLE_RATE
     last_save = started
     for segment in segments:
-        text = segment.text.strip()
-        language = "ur"
-        # Checking every segment is slow on CPU, so only check likely Arabic: Arabic-only
-        # letters or vowel marks in the Urdu output, or low recognizer confidence.
-        suspicious = ARABIC_ONLY.search(text) or segment.avg_logprob < -0.6
-        if arabic_check and suspicious and segment.end - segment.start >= 2.0:
-            piece = audio[int(segment.start * SAMPLE_RATE):int(segment.end * SAMPLE_RATE)]
-            detected, probability, _ = model.detect_language(audio=piece)
-            if detected == "ar" and probability >= 0.6:
-                arabic, _ = model.transcribe(piece, language="ar", beam_size=beam_size, condition_on_previous_text=False)
-                arabic_text = " ".join(s.text.strip() for s in arabic).strip()
-                if arabic_text:
-                    text, language = arabic_text, "ar"
+        text, language = segment.text.strip(), "ur"
+        if arabic_check:
+            text, language = check_arabic(model, audio, segment, beam_size)
         start, end = offset + segment.start, min(offset + segment.end, total)
         if start >= total - 0.5:
             # Whisper sometimes invents a closing phrase ("شکریہ") after audio that stops abruptly.
@@ -171,6 +185,98 @@ def collect(model, audio, segments, beam_size, arabic_check, offset, results, st
         print(f"\r  {stamp(end)} / {stamp(total)} transcribed ({(now - started) / 60:.1f} min this run)", end="", flush=True)
     print()
     return results, time.time() - started
+
+
+def missed_regions(audio, segments, min_gap=0.8, min_density=1.3):
+    """Find speech the recognizer skipped, as (start, end, replaced_segment_or_None) in seconds.
+
+    Over a long recording Whisper sometimes jumps ahead and drops a sentence or two even
+    though it heard them clearly. Two signs show where:
+      * voice activity with no transcript segment over it (uncovered speech), and
+      * a long segment holding far fewer words than it should (Urdu speech runs at about
+        2.5 words a second, so under min_density words a second means words were lost).
+    """
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    bins = int(len(audio) / SAMPLE_RATE * 10) + 1  # 100 ms bins
+    voiced, covered = np.zeros(bins, bool), np.zeros(bins, bool)
+    # A more sensitive VAD than the main pass, so quieter speech is checked too.
+    for chunk in get_speech_timestamps(audio, VadOptions(threshold=0.35, min_silence_duration_ms=300, speech_pad_ms=100)):
+        voiced[chunk["start"] * 10 // SAMPLE_RATE:chunk["end"] * 10 // SAMPLE_RATE + 1] = True
+    for segment in segments:
+        covered[int(segment["start"] * 10):int(segment["end"] * 10) + 1] = True
+
+    regions, missing, i = [], voiced & ~covered, 0
+    while i < bins:
+        if not missing[i]:
+            i += 1
+            continue
+        j = i
+        while j < bins and missing[j:j + 5].any():  # bridge pauses under half a second
+            j += 1
+        if (j - i) / 10 >= min_gap:
+            regions.append((i / 10, j / 10, None))
+        i = j
+    for segment in segments:
+        duration = segment["end"] - segment["start"]
+        if duration > 4 and len(segment["text"].split()) / duration < min_density:
+            regions.append((segment["start"], segment["end"], segment))
+    return sorted(regions, key=lambda region: region[0])
+
+
+def recover_missed(model, audio, segments, prompt, beam_size, arabic_check):
+    """Re-transcribe each skipped region on its own and merge the result into `segments`.
+
+    Heard in isolation (with a second of context either side) the model transcribes these
+    passages reliably. Only words whose timing falls between the neighbouring segments are
+    kept, so their sentences are not duplicated; repetitive, very low-confidence and
+    known invented phrases are discarded.
+    """
+    from types import SimpleNamespace
+
+    regions = missed_regions(audio, segments)
+    if not regions:
+        return segments
+    print(f"  checking {len(regions)} passage(s) the first pass may have skipped")
+    total = len(audio) / SAMPLE_RATE
+    segments, added = list(segments), 0
+    for number, (start, end, replaced) in enumerate(regions, 1):
+        if replaced is None:  # widen an uncovered stretch to the neighbouring segments
+            start = max((s["end"] for s in segments if s["end"] <= start + 0.05), default=0.0)
+            end = min((s["start"] for s in segments if s["start"] >= end - 0.05), default=total)
+        clip_start = max(0.0, start - 1.0)
+        clip = audio[int(clip_start * SAMPLE_RATE):int(min(total, end + 1.0) * SAMPLE_RATE)]
+        pieces, _ = model.transcribe(
+            clip, language="ur", task="transcribe", beam_size=beam_size, temperature=[0.0, 0.2, 0.4],
+            condition_on_previous_text=False, initial_prompt=prompt or None, vad_filter=False, word_timestamps=True,
+        )
+        found = []
+        for piece in pieces:
+            if piece.compression_ratio > 2.4 or piece.avg_logprob < -1.0 or INVENTED.search(piece.text):
+                continue
+            words = [w for w in piece.words or () if start <= clip_start + (w.start + w.end) / 2 <= end]
+            if not words:
+                continue
+            kept = SimpleNamespace(text="".join(w.word for w in words).strip(), avg_logprob=piece.avg_logprob,
+                                   start=words[0].start, end=words[-1].end)
+            text, language = kept.text, "ur"
+            if arabic_check:
+                text, language = check_arabic(model, clip, kept, beam_size)
+            if text and not DEVANAGARI.search(text) and not INVENTED.search(text):
+                found.append({"start": round(clip_start + kept.start, 2), "end": round(min(clip_start + kept.end, total), 2),
+                              "text": text, "language": language})
+        words = sum(len(f["text"].split()) for f in found)
+        if replaced is not None:
+            if words > len(replaced["text"].split()):
+                segments.remove(replaced)
+                segments += found
+                added += words - len(replaced["text"].split())
+        elif found:
+            segments += found
+            added += words
+        print(f"\r  recovered {added} word(s) ({number}/{len(regions)} passages checked)", end="", flush=True)
+    print()
+    return sorted(segments, key=lambda segment: segment["start"])
 
 
 def write_json(path, data):
@@ -276,6 +382,9 @@ def main():
     parser.add_argument("--no-denoise", action="store_true", help="skip noise reduction")
     parser.add_argument("--no-timestamps", action="store_true", help="leave timestamps out of the Word document")
     parser.add_argument("--font", default="Urdu Typesetting", help="Urdu font for the Word document")
+    parser.add_argument("--no-recover", action="store_true", help="skip the second pass that recovers skipped passages")
+    parser.add_argument("--recover", action="store_true",
+                        help="for lectures already transcribed: recover skipped passages, then rebuild the document")
     parser.add_argument("--rebuild", action="store_true", help="rebuild documents from saved segments (re-applies corrections)")
     parser.add_argument("--overwrite", action="store_true", help="transcribe again even if output exists")
     args = parser.parse_args()
@@ -287,17 +396,33 @@ def main():
     prompt = prompt_file.read_text(encoding="utf-8-sig").strip() if prompt_file.exists() else ""
     model = None
 
+    def load_model():
+        nonlocal model
+        if model is None:
+            from faster_whisper import WhisperModel
+            print(f"Loading Whisper {args.model} (first run downloads about 1.6 GB)...")
+            model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=args.threads)
+        return model
+
     for source in find_inputs(args.inputs):
         name = source.stem + ("_section" if args.start or args.duration else "")
         docx_path = out_dir / f"{name}.docx"
         json_path = out_dir / f"{name}.segments.json"
         print(f"\n{source.name}")
 
-        if args.rebuild:
+        if args.rebuild or args.recover:
             if not json_path.exists():
                 print("  - no saved segments; transcribe it first")
                 continue
             saved = json.loads(json_path.read_text(encoding="utf-8"))
+            if args.recover:
+                started = time.time()
+                audio = load_audio(source, saved.get("start"), args.duration, denoise=not args.no_denoise)
+                saved["segments"] = recover_missed(load_model(), audio, saved["segments"], prompt,
+                                                   args.beam_size, not args.no_arabic_check)
+                saved["processing_minutes"] = round(saved.get("processing_minutes", 0) + (time.time() - started) / 60, 1)
+                saved["recovered"] = True
+                write_json(json_path, saved)
         else:
             partial_path = out_dir / f"{name}.partial.json"
             if docx_path.exists() and not args.overwrite:
@@ -318,10 +443,7 @@ def main():
                 else:
                     print("  saved progress was made with different settings; starting again")
 
-            if model is None:
-                from faster_whisper import WhisperModel
-                print(f"Loading Whisper {args.model} (first run downloads about 1.6 GB)...")
-                model = WhisperModel(args.model, device="cpu", compute_type="int8", cpu_threads=args.threads)
+            load_model()
             audio = load_audio(source, args.start, args.duration, denoise=not args.no_denoise)
             offset = done[-1]["end"] if done else 0.0
 
@@ -338,6 +460,11 @@ def main():
                         model, remaining, prompt, args.beam_size, not args.no_arabic_check,
                         offset=offset, done=done, save=save_progress,
                     )
+                if not args.no_recover:
+                    save_progress(segments, run_seconds)  # so an interruption here resumes straight into recovery
+                    recover_started = time.time()
+                    segments = recover_missed(model, audio, segments, prompt, args.beam_size, not args.no_arabic_check)
+                    run_seconds += time.time() - recover_started
             except KeyboardInterrupt:
                 print("\n  stopped; progress saved. Run the same command again to continue.")
                 sys.exit(130)
