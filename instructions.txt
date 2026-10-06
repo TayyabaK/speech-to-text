@@ -1,0 +1,42 @@
+This C:\root\developer\urdu-speech-to-text-naima-sohaib\share\Urdu-Transcription\transcripts folder contains the word docs containing machine transcript of an Urdu Islamic lecture by Naima Sohaib. For each lecture document Please correct only words that were misheard: misspellings, wrong names, and Islamic terms (for example سبر → صبر). Do not change her wording, sentence order, or style, and do not summarize or add anything. Keep it in Urdu script, keep Quran verses and duas in Arabic script, and keep the timestamps. If you are unsure about a word, mark it with [?]. At the end, list the main corrections you made. Please replace the Quran verses with actual script which I have attached and also the translation with the Maududi translation of the certain verse -- Please format the Arabic text in traditional arabic font.
+
+Assalamu Alaikum! 👋
+
+I've attached Urdu-Transcription.zip. It turns Naima aapi's Urdu lectures into Word documents 📝 This will help you create content from her audio lectures. Everything runs on your own PC, so the audio isn't uploaded anywhere.
+
+One-time setup ⚙️
+1️⃣ Install Python from python.org. During setup, tick ✅ "Add python.exe to PATH"
+2️⃣ Open PowerShell and run:
+winget install Gyan.FFmpeg
+Then close and reopen PowerShell.
+3️⃣ Unzip the file, for example to C:\Transcription
+
+To transcribe 🎧
+Open the unzipped folder, click the address bar, type powershell and press Enter. Then run:
+
+One lecture:
+powershell -ExecutionPolicy Bypass -File .\Transcribe.ps1 "C:\Lectures\lecture1.mp3"
+
+A whole folder:
+powershell -ExecutionPolicy Bypass -File .\Transcribe.ps1 "C:\Lectures"
+
+📂 The Word files are saved in the transcripts folder.
+
+Fixing incorrect words with ChatGPT or Claude 🤖
+About 9 in 10 words come out right. To fix the rest:
+1️⃣ Open ChatGPT or Claude and attach the Word file
+2️⃣ Paste this prompt:
+
+This is a machine transcript of an Urdu Islamic lecture by Naima Sohaib. Please correct only words that were misheard: misspellings, wrong names, and Islamic terms (for example سبر → صبر). Do not change her wording, sentence order, or style, and do not summarize or add anything. Keep it in Urdu script, keep Quran verses and duas in Arabic script, and keep the timestamps. If you are unsure about a word, mark it with [?]. At the end, list the main corrections you made.
+
+3️⃣ Read through the corrected version, especially names and Quran verses ✅
+
+💡 For long lectures (over about 30 minutes), ask it to correct one section at a time so nothing gets skipped.
+💡 If the same word is wrong in every lecture, tell me and I'll add it to the automatic fixes.
+
+Good to know 💡
+⏳ It takes about 50 minutes per hour of audio, so a folder is best left running overnight
+🕐 The first run takes a bit longer while it downloads the speech model (about 1.6 GB)
+⏯️ If you stop it, run the same command again and it continues from where it stopped
+
+The README.txt in the folder has more details. Message me if you get stuck! 😊
