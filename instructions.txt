@@ -18,7 +18,7 @@ One lecture:
 powershell -ExecutionPolicy Bypass -File .\Transcribe.ps1 "C:\Lectures\lecture1.mp3"
 
 A whole folder:
-powershell -ExecutionPolicy Bypass -File .\Transcribe.ps1 "C:\Lectures"
+powershell -ExecutionPolicy Bypass -File .\Transcribe.ps1 "C:\Users\tayya\Downloads\lectures-for-transcription"
 
 📂 The Word files are saved in the transcripts folder.
 

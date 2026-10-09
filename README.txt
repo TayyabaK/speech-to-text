@@ -85,6 +85,47 @@ USEFUL OPTIONS (add after the file or folder)
     --help                                 list every option
 
 
+TRANSCRIBING FOR TEXT-TO-SPEECH
+-------------------------------
+Transcribe-ForTTS.ps1 prepares training data for a text-to-speech voice (the
+text-to-speech project next to this folder). It cuts one recording into clips
+of 2-15 seconds, each with its exact Urdu text. It uses the same model,
+prompt.txt and corrections as Transcribe.ps1.
+
+1. Test on two minutes first (takes a few minutes):
+       powershell -ExecutionPolicy Bypass -File .\Transcribe-ForTTS.ps1 "C:\Audio\voice.mp3" --start 00:10:00 --duration 00:02:00
+
+2. Transcribe the whole recording. If other people speak in it, list those
+   parts in a text file, one range per line, and pass it with --exclude:
+       31:14.2 - 31:16.5
+       58:30 - end
+       powershell -ExecutionPolicy Bypass -File .\Transcribe-ForTTS.ps1 "C:\Audio\voice.mp3" --exclude "C:\Audio\other-voices.txt"
+   About an hour per hour of audio. If it stops, run the same command again to
+   continue.
+
+3. Proofread transcripts\voice_tts.srt in Subtitle Edit or Aegisub: listen to
+   each clip and make the text match it word for word. Write English words in
+   Urdu script. To drop a clip, delete its text. Times are on the original
+   recording's timeline. Start with the clips in voice_tts_review.txt (low
+   confidence, English words, possibly cut words). Quran verses, duas and the
+   --exclude parts are already left out; the review file lists them too.
+
+4. Cut the clips into the text-to-speech project:
+       powershell -ExecutionPolicy Bypass -File .\Transcribe-ForTTS.ps1 "C:\Audio\voice.mp3" --export transcripts\voice_tts.srt
+   This writes data\raw\wavs\voice_NNNN.wav and adds lines to
+   data\raw\metadata.csv. Clips are cut from the original audio, not the
+   cleaned copy used for recognition.
+
+5. In the text-to-speech folder, run:
+       .venv\Scripts\python prepare_dataset.py
+   and continue with that project's README.
+
+Transcribing again replaces the SRT only with --overwrite, so save your
+proofread copy under another name first. --rebuild remakes the SRT from the
+saved recognition (seconds, no re-listening), for example after changing
+corrections.tsv or the --exclude list. It also needs --overwrite.
+
+
 NOTES
 -----
 * Accuracy: about 9 in 10 words match a verified transcript. Always proofread
